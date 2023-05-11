@@ -78,13 +78,15 @@ func broadcast() {
 func sendMessage(message []byte, decode bool) {
 	chanel := ""
 	if decode {
-		var input map[string]interface{}
+		input := struct {
+			Chanel   string  `json:"chanel"`
+		}{}
 		if err := json.Unmarshal(message, &input); err != nil {
 			fmt.Println("json error: ", err.Error())
 			return
 		}
-		if input["chanel"] != nil {
-			chanel = input["chanel"].(string)
+		if input.Chanel != "" {
+			chanel = input.Chanel
 		}
 	}
 
