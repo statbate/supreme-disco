@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"os"
+	"io"
+	jsoniter "github.com/json-iterator/go"
 )
 
 func removeSocket(s string) {
@@ -31,12 +34,17 @@ func startSocket() {
 
 func socketHandler(conn net.Conn) {
 	defer conn.Close()
-	buf := make([]byte, 512)
+	d := json.NewDecoder(conn)
 	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			return
+		raw := jsoniter.RawMessage{}
+		err := d.Decode(&raw)
+		if err == io.EOF {
+			fmt.Println("break:", err.Error())
+			break
+		} else if err != nil {
+			fmt.Println("json error:", err.Error())
+			continue
 		}
-		ws.Send <- wsMessage{Message: buf[0:n], Decode: true}
+		ws.Send <- wsMessage{Message: raw, Decode: true}
 	}
 }
