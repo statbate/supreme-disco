@@ -36,13 +36,13 @@ var (
 	json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 	ws = struct {
-		Count chan int
+		//Count chan int
 		Add   chan *websocket.Conn
 		Del   chan *websocket.Conn
 		Send  chan wsMessage
 		Enter chan enterChanel
 	}{
-		Count: make(chan int, 100),
+		//Count: make(chan int, 100),
 		Add:   make(chan *websocket.Conn, 100),
 		Del:   make(chan *websocket.Conn, 100),
 		Send:  make(chan wsMessage, 100),
@@ -60,8 +60,8 @@ func broadcast() {
 		case conn := <-ws.Del:
 			delete(wsClients, conn)
 
-		case <-ws.Count:
-			ws.Count <- len(wsClients)
+		//case <-ws.Count:
+		//	ws.Count <- len(wsClients)
 
 		case r := <-ws.Enter:
 			wsClients[r.Conn] = r.Chanel
@@ -70,6 +70,7 @@ func broadcast() {
 			sendMessage(r.Message, r.Decode)
 
 		case <-ticker.C:
+			fmt.Println("WebSocket:", len(wsClients))
 			sendMessage([]byte("ping"), false)
 		}
 	}
@@ -90,7 +91,7 @@ func sendMessage(message []byte, decode bool) {
 		}
 	}
 
-	fmt.Println(string(message), decode, chanel)
+	//fmt.Println(string(message), decode, chanel)
 
 	for conn, ch := range wsClients {
 		if decode && ch != chanel {
