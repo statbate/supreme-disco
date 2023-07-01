@@ -14,6 +14,11 @@ type enterChanel struct {
 	Chanel string
 }
 
+type sendMsg struct {
+	Conn   *websocket.Conn
+	Message []byte
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -32,12 +37,14 @@ var (
 	json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 	ws = struct {
-		Send  chan []byte
+		Broadcast  chan []byte
+		Send  chan sendMsg
 		Enter chan enterChanel
 		Add   chan *websocket.Conn
 		Del   chan *websocket.Conn
 	}{
-		Send:  make(chan []byte, 100),
+		Broadcast:  make(chan []byte, 100),
+		Send:  make(chan sendMsg, 100),
 		Enter: make(chan enterChanel, 100),
 		Add:   make(chan *websocket.Conn, 100),
 		Del:   make(chan *websocket.Conn, 100),
@@ -50,15 +57,20 @@ func broadcast() {
 		select {
 		case conn := <-ws.Add:
 			wsClients[conn] = ""
+			//fmt.Println("add conn", len(wsClients))
 
 		case conn := <-ws.Del:
 			delete(wsClients, conn)
+			//fmt.Println("delete conn", len(wsClients))
 
 		case r := <-ws.Enter:
 			wsClients[r.Conn] = r.Chanel
 
 		case r := <-ws.Send:
-			sendMessage(r)
+			sendMessage(r.Conn, r.Message)
+			
+		case r := <-ws.Broadcast:
+			sendBroadcast(r)
 
 		case <-ticker.C:
 			fmt.Println("WebSocket:", len(wsClients))
@@ -66,7 +78,13 @@ func broadcast() {
 	}
 }
 
-func sendMessage(message []byte) {
+func sendMessage(conn *websocket.Conn, message []byte){
+	if err := conn.WriteMessage(1, message); err != nil {
+		conn.Close()
+	}
+}
+
+func sendBroadcast(message []byte) {
 	input := struct {
 		Chanel string `json:"chanel"`
 	}{}
@@ -78,10 +96,7 @@ func sendMessage(message []byte) {
 		if ch != input.Chanel {
 			continue
 		}
-		if err := conn.WriteMessage(1, message); err != nil {
-			conn.Close()
-			delete(wsClients, conn)
-		}
+		sendMessage(conn, message)
 	}
 }
 
@@ -112,16 +127,13 @@ func readWS(conn *websocket.Conn) {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			fmt.Println("readWS", err.Error())
+			//fmt.Println("readWS", err.Error())
 			return
 		}
 
 		if string(message) == "ping" {
 			if time.Now().Unix() > ping {
-				if err := conn.WriteMessage(1, []byte("pong")); err != nil {
-					fmt.Println("write message", err.Error())
-					return
-				}
+				ws.Send <- sendMsg{Conn: conn, Message: []byte("pong")}
 				ping = time.Now().Unix() + 15
 			}
 			continue
@@ -132,7 +144,7 @@ func readWS(conn *websocket.Conn) {
 		}{}
 
 		if err := json.Unmarshal(message, &input); err != nil {
-			fmt.Println("wrong json", err.Error())
+			//fmt.Println("wrong json", err.Error())
 			return
 		}
 

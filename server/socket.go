@@ -45,6 +45,6 @@ func socketHandler(conn net.Conn) {
 			fmt.Println("json error:", err.Error())
 			continue
 		}
-		ws.Send <- raw
+		ws.Broadcast <- raw
 	}
 }
