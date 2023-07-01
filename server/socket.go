@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	jsoniter "github.com/json-iterator/go"
+	"io"
 	"log"
 	"net"
 	"os"
-	"io"
-	jsoniter "github.com/json-iterator/go"
 )
 
 func removeSocket(s string) {
@@ -45,6 +45,6 @@ func socketHandler(conn net.Conn) {
 			fmt.Println("json error:", err.Error())
 			continue
 		}
-		ws.Send <- wsMessage{Message: raw, Decode: true}
+		ws.Send <- raw
 	}
 }

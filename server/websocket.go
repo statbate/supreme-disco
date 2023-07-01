@@ -14,19 +14,15 @@ type enterChanel struct {
 	Chanel string
 }
 
-type wsMessage struct {
-	Message []byte
-	Decode  bool
-}
-
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		if r.Header.Get("origin") == "https://statbate.com" {
-			return true
-		}
-		return false
+		//if r.Header.Get("origin") == "https://statbate.com" {
+		//	return true
+		//}
+		//return false
+		return true
 	},
 }
 
@@ -36,17 +32,15 @@ var (
 	json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 	ws = struct {
-		//Count chan int
+		Send  chan []byte
+		Enter chan enterChanel
 		Add   chan *websocket.Conn
 		Del   chan *websocket.Conn
-		Send  chan wsMessage
-		Enter chan enterChanel
 	}{
-		//Count: make(chan int, 100),
+		Send:  make(chan []byte, 100),
+		Enter: make(chan enterChanel, 100),
 		Add:   make(chan *websocket.Conn, 100),
 		Del:   make(chan *websocket.Conn, 100),
-		Send:  make(chan wsMessage, 100),
-		Enter: make(chan enterChanel, 100),
 	}
 )
 
@@ -60,41 +54,28 @@ func broadcast() {
 		case conn := <-ws.Del:
 			delete(wsClients, conn)
 
-		//case <-ws.Count:
-		//	ws.Count <- len(wsClients)
-
 		case r := <-ws.Enter:
 			wsClients[r.Conn] = r.Chanel
 
 		case r := <-ws.Send:
-			sendMessage(r.Message, r.Decode)
+			sendMessage(r)
 
 		case <-ticker.C:
 			fmt.Println("WebSocket:", len(wsClients))
-			sendMessage([]byte("ping"), false)
 		}
 	}
 }
 
-func sendMessage(message []byte, decode bool) {
-	chanel := ""
-	if decode {
-		input := struct {
-			Chanel   string  `json:"chanel"`
-		}{}
-		if err := json.Unmarshal(message, &input); err != nil {
-			fmt.Println("json error: ", err.Error())
-			return
-		}
-		if input.Chanel != "" {
-			chanel = input.Chanel
-		}
+func sendMessage(message []byte) {
+	input := struct {
+		Chanel string `json:"chanel"`
+	}{}
+	if err := json.Unmarshal(message, &input); err != nil {
+		fmt.Println("json error: ", err.Error())
+		return
 	}
-
-	//fmt.Println(string(message), decode, chanel)
-
 	for conn, ch := range wsClients {
-		if decode && ch != chanel {
+		if ch != input.Chanel {
 			continue
 		}
 		if err := conn.WriteMessage(1, message); err != nil {
@@ -125,8 +106,9 @@ func readWS(conn *websocket.Conn) {
 		"chaturbate": true,
 		"bongacams":  true,
 		"stripchat":  true,
+		"camsoda":    true,
 	}
-
+	ping := time.Now().Unix()
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
@@ -134,10 +116,28 @@ func readWS(conn *websocket.Conn) {
 			return
 		}
 
-		input := string(message)
+		if string(message) == "ping" {
+			if time.Now().Unix() > ping {
+				if err := conn.WriteMessage(1, []byte("pong")); err != nil {
+					fmt.Println("write message", err.Error())
+					return
+				}
+				ping = time.Now().Unix() + 15
+			}
+			continue
+		}
 
-		if len(input) < 32 && chanels[input] {
-			ws.Enter <- enterChanel{Conn: conn, Chanel: input}
+		input := struct {
+			Chanel string `json:"chanel"`
+		}{}
+
+		if err := json.Unmarshal(message, &input); err != nil {
+			fmt.Println("wrong json", err.Error())
+			return
+		}
+
+		if chanels[input.Chanel] {
+			ws.Enter <- enterChanel{Conn: conn, Chanel: input.Chanel}
 		}
 	}
 }
