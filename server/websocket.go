@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"runtime"
 
 	"github.com/gorilla/websocket"
 	jsoniter "github.com/json-iterator/go"
@@ -14,11 +15,6 @@ type Client struct {
 	Conn   *websocket.Conn
 }
 
-type sendMsg struct {
-	Message []byte
-	Conn    *websocket.Conn
-}
-
 var (
 	wsClients = make(map[*Client]bool)
 
@@ -26,12 +22,10 @@ var (
 
 	ws = struct {
 		Broadcast chan []byte
-		Send      chan sendMsg
 		Add       chan *Client
 		Del       chan *Client
 	}{
 		Broadcast: make(chan []byte, 100),
-		Send:      make(chan sendMsg, 100),
 		Add:       make(chan *Client, 100),
 		Del:       make(chan *Client, 100),
 	}
@@ -59,21 +53,12 @@ func broadcast() {
 		case conn := <-ws.Del:
 			delete(wsClients, conn)
 
-		case r := <-ws.Send:
-			sendMessage(r.Conn, r.Message)
-
 		case r := <-ws.Broadcast:
 			sendBroadcast(r)
 
 		case <-ticker.C:
-			fmt.Println("WebSocket:", len(wsClients))
+			fmt.Println("WebSocket:", len(wsClients), "Goroutines:", runtime.NumGoroutine())
 		}
-	}
-}
-
-func sendMessage(conn *websocket.Conn, message []byte) {
-	if err := conn.WriteMessage(1, message); err != nil {
-		conn.Close()
 	}
 }
 
@@ -89,23 +74,10 @@ func sendBroadcast(message []byte) {
 		if client.Chanel != input.Chanel {
 			continue
 		}
-		sendMessage(client.Conn, message)
+		if err := client.Conn.WriteMessage(1, message); err != nil {
+			client.Conn.Close()
+		}
 	}
-}
-
-func enterChannel(conn *websocket.Conn, chanel string) (*Client, bool) {
-	chanels := map[string]bool{
-		"chaturbate": true,
-		"bongacams":  true,
-		"stripchat":  true,
-		"camsoda":    true,
-	}
-	client := &Client{Conn: conn, Chanel: chanel}
-	if chanels[chanel] {
-		ws.Add <- client
-		return client, true
-	}
-	return client, false
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -132,30 +104,31 @@ func readWS(conn *websocket.Conn) {
 	if err := json.Unmarshal(message, &input); err != nil {
 		return
 	}
-
-	client, ok := enterChannel(conn, input.Chanel)
-	if !ok {
+	
+	client := &Client{Conn: conn, Chanel: input.Chanel}
+	
+	chanels := map[string]bool{
+		"chaturbate": true,
+		"bongacams":  true,
+		"stripchat":  true,
+		"camsoda":    true,
+	}
+	
+	if !chanels[input.Chanel] {
 		return
 	}
-
+	
+	ws.Add <- client
+	
 	defer func() {
 		ws.Del <- client
 	}()
 
-	ping := time.Now().Unix()
 	for {
 		conn.SetReadDeadline(time.Now().Add(30 * time.Minute))
-		_, message, err := conn.ReadMessage()
+		_, _, err := conn.ReadMessage()
 		if err != nil {
 			return
-		}
-
-		if string(message) == "ping" {
-			if time.Now().Unix() > ping {
-				ws.Send <- sendMsg{Conn: conn, Message: []byte("pong")}
-				ping = time.Now().Unix() + 15
-			}
-			continue
 		}
 	}
 }
