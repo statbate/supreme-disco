@@ -9,45 +9,43 @@ import (
 	jsoniter "github.com/json-iterator/go"
 )
 
-type enterChanel struct {
-	Conn   *websocket.Conn
+type Client struct {
 	Chanel string
+	Conn   *websocket.Conn
 }
 
 type sendMsg struct {
-	Conn   *websocket.Conn
 	Message []byte
-}
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		//if r.Header.Get("origin") == "https://statbate.com" {
-		//	return true
-		//}
-		//return false
-		return true
-	},
+	Conn    *websocket.Conn
 }
 
 var (
-	wsClients = make(map[*websocket.Conn]string)
+	wsClients = make(map[*Client]bool)
 
 	json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 	ws = struct {
-		Broadcast  chan []byte
-		Send  chan sendMsg
-		Enter chan enterChanel
-		Add   chan *websocket.Conn
-		Del   chan *websocket.Conn
+		Broadcast chan []byte
+		Send      chan sendMsg
+		Add       chan *Client
+		Del       chan *Client
 	}{
-		Broadcast:  make(chan []byte, 100),
-		Send:  make(chan sendMsg, 100),
-		Enter: make(chan enterChanel, 100),
-		Add:   make(chan *websocket.Conn, 100),
-		Del:   make(chan *websocket.Conn, 100),
+		Broadcast: make(chan []byte, 100),
+		Send:      make(chan sendMsg, 100),
+		Add:       make(chan *Client, 100),
+		Del:       make(chan *Client, 100),
+	}
+
+	upgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			params := r.URL.Query()
+			if params["api_key"] != nil || r.Header.Get("origin") == "https://statbate.com" {
+				return true
+			}
+			return false
+		},
 	}
 )
 
@@ -55,20 +53,15 @@ func broadcast() {
 	ticker := time.NewTicker(30 * time.Second)
 	for {
 		select {
-		case conn := <-ws.Add:
-			wsClients[conn] = ""
-			//fmt.Println("add conn", len(wsClients))
+		case client := <-ws.Add:
+			wsClients[client] = true
 
 		case conn := <-ws.Del:
 			delete(wsClients, conn)
-			//fmt.Println("delete conn", len(wsClients))
-
-		case r := <-ws.Enter:
-			wsClients[r.Conn] = r.Chanel
 
 		case r := <-ws.Send:
 			sendMessage(r.Conn, r.Message)
-			
+
 		case r := <-ws.Broadcast:
 			sendBroadcast(r)
 
@@ -78,7 +71,7 @@ func broadcast() {
 	}
 }
 
-func sendMessage(conn *websocket.Conn, message []byte){
+func sendMessage(conn *websocket.Conn, message []byte) {
 	if err := conn.WriteMessage(1, message); err != nil {
 		conn.Close()
 	}
@@ -92,12 +85,27 @@ func sendBroadcast(message []byte) {
 		fmt.Println("json error: ", err.Error())
 		return
 	}
-	for conn, ch := range wsClients {
-		if ch != input.Chanel {
+	for client := range wsClients {
+		if client.Chanel != input.Chanel {
 			continue
 		}
-		sendMessage(conn, message)
+		sendMessage(client.Conn, message)
 	}
+}
+
+func enterChannel(conn *websocket.Conn, chanel string) (*Client, bool) {
+	chanels := map[string]bool{
+		"chaturbate": true,
+		"bongacams":  true,
+		"stripchat":  true,
+		"camsoda":    true,
+	}
+	client := &Client{Conn: conn, Chanel: chanel}
+	if chanels[chanel] {
+		ws.Add <- client
+		return client, true
+	}
+	return client, false
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -111,23 +119,34 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 func readWS(conn *websocket.Conn) {
 	defer conn.Close()
 
-	ws.Add <- conn
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		return
+	}
+
+	input := struct {
+		Chanel string `json:"chanel"`
+	}{}
+
+	if err := json.Unmarshal(message, &input); err != nil {
+		return
+	}
+
+	client, ok := enterChannel(conn, input.Chanel)
+	if !ok {
+		return
+	}
 
 	defer func() {
-		ws.Del <- conn
+		ws.Del <- client
 	}()
 
-	chanels := map[string]bool{
-		"chaturbate": true,
-		"bongacams":  true,
-		"stripchat":  true,
-		"camsoda":    true,
-	}
 	ping := time.Now().Unix()
 	for {
+		conn.SetReadDeadline(time.Now().Add(30 * time.Minute))
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			//fmt.Println("readWS", err.Error())
 			return
 		}
 
@@ -137,19 +156,6 @@ func readWS(conn *websocket.Conn) {
 				ping = time.Now().Unix() + 15
 			}
 			continue
-		}
-
-		input := struct {
-			Chanel string `json:"chanel"`
-		}{}
-
-		if err := json.Unmarshal(message, &input); err != nil {
-			//fmt.Println("wrong json", err.Error())
-			return
-		}
-
-		if chanels[input.Chanel] {
-			ws.Enter <- enterChanel{Conn: conn, Chanel: input.Chanel}
 		}
 	}
 }
