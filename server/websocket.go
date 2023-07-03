@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"time"
 	"runtime"
+	"time"
 
 	"github.com/gorilla/websocket"
 	jsoniter "github.com/json-iterator/go"
@@ -25,9 +25,9 @@ var (
 		Add       chan *Client
 		Del       chan *Client
 	}{
-		Broadcast: make(chan []byte, 100),
-		Add:       make(chan *Client, 100),
-		Del:       make(chan *Client, 100),
+		Broadcast: make(chan []byte, 1),
+		Add:       make(chan *Client),
+		Del:       make(chan *Client),
 	}
 
 	upgrader = websocket.Upgrader{
@@ -44,7 +44,7 @@ var (
 )
 
 func broadcast() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(20 * time.Second)
 	for {
 		select {
 		case client := <-ws.Add:
@@ -54,10 +54,11 @@ func broadcast() {
 			delete(wsClients, conn)
 
 		case r := <-ws.Broadcast:
+			//fmt.Println(len(ws.Broadcast), cap(ws.Broadcast))
 			sendBroadcast(r)
 
 		case <-ticker.C:
-			fmt.Println("WebSocket:", len(wsClients), "Goroutines:", runtime.NumGoroutine())
+			fmt.Println(len(wsClients), runtime.NumGoroutine(), len(ws.Broadcast), cap(ws.Broadcast))
 		}
 	}
 }
@@ -75,6 +76,7 @@ func sendBroadcast(message []byte) {
 			continue
 		}
 		if err := client.Conn.WriteMessage(1, message); err != nil {
+			delete(wsClients, client)
 			client.Conn.Close()
 		}
 	}
@@ -104,22 +106,22 @@ func readWS(conn *websocket.Conn) {
 	if err := json.Unmarshal(message, &input); err != nil {
 		return
 	}
-	
+
 	client := &Client{Conn: conn, Chanel: input.Chanel}
-	
+
 	chanels := map[string]bool{
 		"chaturbate": true,
 		"bongacams":  true,
 		"stripchat":  true,
 		"camsoda":    true,
 	}
-	
+
 	if !chanels[input.Chanel] {
 		return
 	}
-	
+
 	ws.Add <- client
-	
+
 	defer func() {
 		ws.Del <- client
 	}()
