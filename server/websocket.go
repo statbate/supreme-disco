@@ -15,6 +15,11 @@ type Client struct {
 	Conn   *websocket.Conn
 }
 
+type wsMsg struct {
+	Mes    []byte
+	client *Client
+}
+
 var (
 	wsClients = make(map[*Client]bool)
 
@@ -22,10 +27,12 @@ var (
 
 	ws = struct {
 		Broadcast chan []byte
+		Send      chan *wsMsg
 		Add       chan *Client
 		Del       chan *Client
 	}{
 		Broadcast: make(chan []byte, 1),
+		Send:      make(chan *wsMsg, 1),
 		Add:       make(chan *Client),
 		Del:       make(chan *Client),
 	}
@@ -50,15 +57,27 @@ func broadcast() {
 		case client := <-ws.Add:
 			wsClients[client] = true
 
-		case conn := <-ws.Del:
-			delete(wsClients, conn)
+		case client := <-ws.Del:
+			delete(wsClients, client)
 
-		case r := <-ws.Broadcast:
+		case msg := <-ws.Send:
+			sendMessage(msg)
+
+		case b := <-ws.Broadcast:
 			//fmt.Println(len(ws.Broadcast), cap(ws.Broadcast))
-			sendBroadcast(r)
+			sendBroadcast(b)
 
 		case <-ticker.C:
 			fmt.Println(len(wsClients), runtime.NumGoroutine(), len(ws.Broadcast), cap(ws.Broadcast))
+		}
+	}
+}
+
+func sendMessage(x *wsMsg) {
+	if _, ok := wsClients[x.client]; ok {
+		if err := x.client.Conn.WriteMessage(1, x.Mes); err != nil {
+			delete(wsClients, x.client)
+			x.client.Conn.Close()
 		}
 	}
 }
@@ -126,11 +145,16 @@ func readWS(conn *websocket.Conn) {
 		ws.Del <- client
 	}()
 
+	ping := time.Now().Unix()
 	for {
 		conn.SetReadDeadline(time.Now().Add(30 * time.Minute))
-		_, _, err := conn.ReadMessage()
+		_, message, err := conn.ReadMessage()
 		if err != nil {
 			return
+		}
+		if string(message) == "ping" && time.Now().Unix() > ping {
+			ws.Send <- &wsMsg{client: client, Mes: []byte("pong")}
+			ping = time.Now().Unix() + 15
 		}
 	}
 }
